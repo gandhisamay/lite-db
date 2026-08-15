@@ -11,7 +11,7 @@ import (
 
 type Database struct {
 	data        map[string]string
-	walFile     *os.File
+	file        *os.File
 	walFilePath string
 	isReady     bool
 }
@@ -25,14 +25,14 @@ const (
 	PUT    Operation = "PUT"
 )
 
-const EMPTY_STRING string = ""
+const emptyString string = ""
 
 func Start() *Database {
 	// prepares the database and returns the database object
 	// read all the data from the file
 	walFilePath := "data.wal"
 
-	file, err := os.OpenFile(walFilePath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	file, err := os.OpenFile(walFilePath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatalln("failed to read the wal file")
 	}
@@ -67,14 +67,14 @@ func Start() *Database {
 
 	return &Database{
 		data:        data,
-		walFile:     file,
+		file:        file,
 		walFilePath: walFilePath,
 		isReady:     true,
 	}
 }
 
 func (db *Database) Close() {
-	db.walFile.Close()
+	db.file.Close()
 	db.isReady = false
 }
 
@@ -83,20 +83,16 @@ func (db *Database) Perform(command string, values ...string) (string, bool) {
 
 	switch operation {
 	case GET:
-		// perform the get operation now
 		return db.get(values[0])
 	case SET:
-		// perform the set operation now
 		return db.set(values[0], values[1])
 	case PUT:
-		// perform the put operation now
 		return db.put(values[0], values[1])
 	case DELETE:
-		// perform the delete operation now
 		return db.delete(values[0])
 	default:
 		fmt.Println("Invalid operation, valid operations are GET, SET, PUT, DELETE")
-		return EMPTY_STRING, false
+		return emptyString, false
 	}
 }
 
@@ -108,11 +104,12 @@ func (db *Database) get(key string) (string, bool) {
 func (db *Database) set(key string, value string) (string, bool) {
 	// write to the file first
 	log := fmt.Sprintf("SET %s %s\n", key, value)
-	_, err := db.walFile.WriteString(log)
+
+	err := WriteToWal(log, db.file)
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println("SET operation failed")
-		return EMPTY_STRING, false
+		return emptyString, false
 	}
 
 	// if that doesn't fail, we write to the map
@@ -122,10 +119,12 @@ func (db *Database) set(key string, value string) (string, bool) {
 
 func (db *Database) put(key string, value string) (string, bool) {
 	log := fmt.Sprintf("PUT %s %s\n", key, value)
-	_, err := db.walFile.WriteString(log)
+
+	err := WriteToWal(log, db.file)
 	if err != nil {
-		fmt.Println("put operation failed")
-		return EMPTY_STRING, false
+		fmt.Println(err)
+		fmt.Println("fsync failed for the SET operation")
+		return emptyString, false
 	}
 
 	// if that doesn't fail, we write to the map
@@ -135,10 +134,11 @@ func (db *Database) put(key string, value string) (string, bool) {
 
 func (db *Database) delete(key string) (string, bool) {
 	log := fmt.Sprintf("DELETE %s\n", key)
-	_, err := db.walFile.WriteString(log)
+	err := WriteToWal(log, db.file)
 	if err != nil {
+		fmt.Println(err)
 		fmt.Println("delete operation failed")
-		return EMPTY_STRING, false
+		return emptyString, false
 	}
 
 	// if that doesn't fail, we write to the map
