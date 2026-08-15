@@ -4,6 +4,8 @@ package wal
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 )
@@ -76,18 +78,31 @@ func (wal *Wal) Replay(fn func([]byte)) error {
 			return err
 		}
 
+		var checkSumStored [4]byte
+
+		_, err = io.ReadFull(wal.file, checkSumStored[:])
+		if err != nil {
+			return err
+		}
+		checkSumStoredBinary := binary.LittleEndian.Uint32(checkSumStored[:])
+
+		checkSumComputed := crc32.ChecksumIEEE(payload)
+
+		if checkSumStoredBinary != checkSumComputed {
+			// we have an issue
+			message := fmt.Sprintf("data corrupted for payload: %s and checksum: %d", payload, checkSumStoredBinary)
+			return errors.New(message)
+		}
+
 		fn(payload)
-
 	}
-
-	return nil
 }
 
 func buildByteArrPayload(log string) []byte {
 	payload := []byte(log)
-	buf := make([]byte, 4+len(payload))
-
+	buf := make([]byte, 8+len(payload))
 	binary.LittleEndian.PutUint32(buf[:4], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(buf[4+len(payload):], crc32.ChecksumIEEE(payload))
 
 	copy(buf[4:], payload)
 

@@ -42,7 +42,11 @@ func Start() *Database {
 		isReady: true,
 	}
 
-	db.wal.Replay(db.applyRecord)
+	err = db.wal.Replay(db.applyRecord)
+	if err != nil {
+		wal.Close()
+		log.Fatalln("wal replay failed:", err)
+	}
 
 	return db
 }
