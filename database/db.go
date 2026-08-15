@@ -2,18 +2,17 @@
 package database
 
 import (
-	"bufio"
 	"fmt"
 	"log"
-	"os"
 	"strings"
+
+	"com.db.beginner/wal"
 )
 
 type Database struct {
-	data        map[string]string
-	file        *os.File
-	walFilePath string
-	isReady     bool
+	data    map[string]string
+	wal     *wal.Wal
+	isReady bool
 }
 
 type Operation string
@@ -30,51 +29,46 @@ const emptyString string = ""
 func Start() *Database {
 	// prepares the database and returns the database object
 	// read all the data from the file
-	walFilePath := "data.wal"
-
-	file, err := os.OpenFile(walFilePath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatalln("failed to read the wal file")
-	}
-
-	// now we read from the file, and load everything into the data map
-	scanner := bufio.NewScanner(file)
 	data := make(map[string]string, 0)
 
-	for scanner.Scan() {
-		logArr := strings.Fields(scanner.Text())
-
-		operation := Operation(logArr[0])
-
-		switch operation {
-		case PUT:
-			key := logArr[1]
-			value := logArr[2]
-			data[key] = value
-		case SET:
-			key := logArr[1]
-			value := logArr[2]
-			data[key] = value
-		case DELETE:
-			key := logArr[1]
-			delete(data, key)
-		}
+	wal, err := wal.Open()
+	if err != nil {
+		log.Fatalln(err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Fatalln("failed to read the wal file")
+	db := &Database{
+		data:    data,
+		wal:     wal,
+		isReady: true,
 	}
 
-	return &Database{
-		data:        data,
-		file:        file,
-		walFilePath: walFilePath,
-		isReady:     true,
+	db.wal.Replay(db.applyRecord)
+
+	return db
+}
+
+func (db *Database) applyRecord(payload []byte) {
+	logArr := strings.Fields(string(payload))
+
+	operation := Operation(logArr[0])
+
+	switch operation {
+	case PUT:
+		key := logArr[1]
+		value := logArr[2]
+		db.data[key] = value
+	case SET:
+		key := logArr[1]
+		value := logArr[2]
+		db.data[key] = value
+	case DELETE:
+		key := logArr[1]
+		delete(db.data, key)
 	}
 }
 
 func (db *Database) Close() {
-	db.file.Close()
+	db.wal.Close()
 	db.isReady = false
 }
 
@@ -105,7 +99,7 @@ func (db *Database) set(key string, value string) (string, bool) {
 	// write to the file first
 	log := fmt.Sprintf("SET %s %s\n", key, value)
 
-	err := WriteToWal(log, db.file)
+	err := db.wal.Append(log)
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println("SET operation failed")
@@ -120,7 +114,7 @@ func (db *Database) set(key string, value string) (string, bool) {
 func (db *Database) put(key string, value string) (string, bool) {
 	log := fmt.Sprintf("PUT %s %s\n", key, value)
 
-	err := WriteToWal(log, db.file)
+	err := db.wal.Append(log)
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println("fsync failed for the SET operation")
@@ -134,7 +128,7 @@ func (db *Database) put(key string, value string) (string, bool) {
 
 func (db *Database) delete(key string) (string, bool) {
 	log := fmt.Sprintf("DELETE %s\n", key)
-	err := WriteToWal(log, db.file)
+	err := db.wal.Append(log)
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println("delete operation failed")
