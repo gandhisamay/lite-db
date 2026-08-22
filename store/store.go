@@ -11,7 +11,7 @@ type Store struct {
 	// now we have this ready, let's build upon this now
 	wal        *wal.Wal
 	data       map[string]string
-	writeQueue chan string
+	writeChan chan string
 	batchChan  chan []string
 	timeout    int
 	batchSize  int
@@ -27,7 +27,7 @@ func Open() (*Store, error) {
 	st := &Store{
 		wal:        walFile,
 		data:       make(map[string]string),
-		writeQueue: make(chan string),
+		writeChan: make(chan string),
 		batchChan:  make(chan []string),
 		batchSize:  5,
 	}
@@ -45,28 +45,24 @@ func (st *Store) Replay(fn func([]byte)) error {
 
 // Append writes an entry to the store's WAL.
 func (st *Store) Append(entry string) error {
-	st.writeQueue <- entry
+	st.writeChan <- entry
 	return nil
 }
 
 // Close closes the store and its WAL.
 func (st *Store) Close() error {
-	// before closing this, we must process the batchChan and writeQueue
-	// close(st.batchChan)
-	// close(st.writeQueue)
-	// return st.wal.Close()
-	return nil
+	// TODO: resolve writeChan concurrency bug
+	close(st.writeChan)
+	return st.wal.Close()
 }
 
-// Write function will keep running indefinitely
-// concurrency issues here
-// 1. If the batchChan is closed, but we still try to write into it, then we are screwed
-// so we must make sure, that the remaining part in the batch is flushed before, we actually
-// batch channel is closed, similarly for the write queue, same logic is applicable
+// one concurrency bug that still exists is, what happens, if our system accepts
+// a write after writeQueue channel is closed, we need to fix that as well
 func (st *Store) write() {
+	defer close(st.batchChan)
 	batch := make([]string, 0, st.batchSize)
 
-	for value := range st.writeQueue {
+	for value := range st.writeChan {
 
 		batch = append(batch, value)
 
@@ -78,6 +74,9 @@ func (st *Store) write() {
 		}
 
 	}
+
+	// this handles the case when write queue is closed
+	st.batchChan <- batch
 }
 
 func (st *Store) process() error {
