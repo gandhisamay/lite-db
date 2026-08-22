@@ -9,11 +9,12 @@ import (
 )
 
 type Store struct {
-	// now we have this ready, let's build upon this now
 	wal       walWriter
 	data      map[string]string
 	writeChan chan string
 	batchChan chan []string
+	mem       *Memtable
+	imm       *Memtable
 	timeout   int
 	batchSize int
 }
