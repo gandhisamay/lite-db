@@ -87,6 +87,8 @@ func (st *Store) write() {
 			}
 
 			if len(batch) == 0 {
+
+				// some boilerplate code related to production timer behaviour
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
