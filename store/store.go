@@ -3,6 +3,7 @@ package store
 
 import (
 	"fmt"
+	"time"
 
 	"com.db.beginner/wal"
 )
@@ -70,22 +71,46 @@ func (st *Store) write() {
 	defer close(st.batchChan)
 	batch := make([]string, 0, st.batchSize)
 
-	for value := range st.writeChan {
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
 
-		batch = append(batch, value)
+	for {
+		select {
+		case value, ok := <-st.writeChan:
 
-		if len(batch) == st.batchSize {
-			// process this array, make a cpy
-			st.batchChan <- batch
+			if !ok {
+				// channel is closed, clear the partial batch
+				if len(batch) > 0 {
+					st.batchChan <- batch
+				}
+				return
+			}
 
-			batch = make([]string, 0, st.batchSize)
+			if len(batch) == 0 {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(time.Millisecond)
+			}
+
+			batch = append(batch, value)
+
+			if len(batch) == st.batchSize {
+				// process this array, make a cpy
+				st.batchChan <- batch
+
+				batch = make([]string, 0, st.batchSize)
+			}
+
+		case <-timer.C:
+			if len(batch) > 0 {
+				st.batchChan <- batch
+				batch = make([]string, 0, st.batchSize)
+			}
 		}
-
-	}
-
-	// Flush a partial final batch, but do not create an empty batch.
-	if len(batch) > 0 {
-		st.batchChan <- batch
 	}
 }
 
