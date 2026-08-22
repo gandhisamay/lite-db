@@ -107,11 +107,11 @@ func (db *Database) set(key string, value string) (string, bool) {
 		fmt.Println("SET operation failed")
 		return emptyString, false
 	}
-	if err := db.store.Fsync(); err != nil {
-		fmt.Println(err)
-		fmt.Println("SET operation failed")
-		return emptyString, false
-	}
+	// if err := db.store.Fsync(); err != nil {
+	// 	fmt.Println(err)
+	// 	fmt.Println("SET operation failed")
+	// 	return emptyString, false
+	// }
 
 	// if that doesn't fail, we write to the map
 	db.data[key] = value
@@ -127,11 +127,11 @@ func (db *Database) put(key string, value string) (string, bool) {
 		fmt.Println("fsync failed for the SET operation")
 		return emptyString, false
 	}
-	if err := db.store.Fsync(); err != nil {
-		fmt.Println(err)
-		fmt.Println("fsync failed for the SET operation")
-		return emptyString, false
-	}
+	// if err := db.store.Fsync(); err != nil {
+	// 	fmt.Println(err)
+	// 	fmt.Println("fsync failed for the SET operation")
+	// 	return emptyString, false
+	// }
 
 	// if that doesn't fail, we write to the map
 	db.data[key] = value
@@ -146,11 +146,11 @@ func (db *Database) delete(key string) (string, bool) {
 		fmt.Println("delete operation failed")
 		return emptyString, false
 	}
-	if err := db.store.Fsync(); err != nil {
-		fmt.Println(err)
-		fmt.Println("delete operation failed")
-		return emptyString, false
-	}
+	// if err := db.store.Fsync(); err != nil {
+	// 	fmt.Println(err)
+	// 	fmt.Println("delete operation failed")
+	// 	return emptyString, false
+	// }
 
 	// if that doesn't fail, we write to the map
 	delete(db.data, key)

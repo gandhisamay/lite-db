@@ -2,6 +2,8 @@
 package store
 
 import (
+	"fmt"
+
 	"com.db.beginner/wal"
 )
 
@@ -22,12 +24,18 @@ func Open() (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{
+	st := &Store{
 		wal:        walFile,
 		data:       make(map[string]string),
 		writeQueue: make(chan string),
 		batchChan:  make(chan []string),
-	}, nil
+		batchSize:  5,
+	}
+
+	go st.process()
+	go st.write()
+
+	return st, nil
 }
 
 // Replay replays the store's WAL through fn.
@@ -37,24 +45,26 @@ func (st *Store) Replay(fn func([]byte)) error {
 
 // Append writes an entry to the store's WAL.
 func (st *Store) Append(entry string) error {
-	return st.wal.Append(entry)
-}
-
-// Fsync makes all entries currently written to the WAL durable.
-func (st *Store) Fsync() error {
-	return st.wal.Fsync()
+	st.writeQueue <- entry
+	return nil
 }
 
 // Close closes the store and its WAL.
 func (st *Store) Close() error {
-	return st.wal.Close()
+	// before closing this, we must process the batchChan and writeQueue
+	// close(st.batchChan)
+	// close(st.writeQueue)
+	// return st.wal.Close()
+	return nil
 }
 
 // Write function will keep running indefinitely
-func (st *Store) Write(data string) {
+// concurrency issues here
+// 1. If the batchChan is closed, but we still try to write into it, then we are screwed
+// so we must make sure, that the remaining part in the batch is flushed before, we actually
+// batch channel is closed, similarly for the write queue, same logic is applicable
+func (st *Store) write() {
 	batch := make([]string, 0, st.batchSize)
-
-	go st.process()
 
 	for value := range st.writeQueue {
 
@@ -75,9 +85,13 @@ func (st *Store) process() error {
 		batch := <-st.batchChan
 
 		for _, entry := range batch {
-			st.wal.Append(entry)
+			err := st.wal.Append(entry)
+			if err != nil {
+				return err
+			}
 		}
 
+		fmt.Println("Fsyncing")
 		err := st.wal.Fsync()
 		if err != nil {
 			return err
