@@ -6,12 +6,12 @@ import (
 	"log"
 	"strings"
 
-	"com.db.beginner/wal"
+	"com.db.beginner/store"
 )
 
 type Database struct {
 	data    map[string]string
-	wal     *wal.Wal
+	store   *store.Store
 	isReady bool
 }
 
@@ -29,22 +29,20 @@ const emptyString string = ""
 func Start() *Database {
 	// prepares the database and returns the database object
 	// read all the data from the file
-	data := make(map[string]string, 0)
-
-	wal, err := wal.Open()
+	dbStore, err := store.Open()
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	db := &Database{
-		data:    data,
-		wal:     wal,
+		data:    make(map[string]string),
+		store:   dbStore,
 		isReady: true,
 	}
 
-	err = db.wal.Replay(db.applyRecord)
+	err = db.store.Replay(db.applyRecord)
 	if err != nil {
-		wal.Close()
+		db.store.Close()
 		log.Fatalln("wal replay failed:", err)
 	}
 
@@ -72,7 +70,7 @@ func (db *Database) applyRecord(payload []byte) {
 }
 
 func (db *Database) Close() {
-	db.wal.Close()
+	db.store.Close()
 	db.isReady = false
 }
 
@@ -103,8 +101,13 @@ func (db *Database) set(key string, value string) (string, bool) {
 	// write to the file first
 	log := fmt.Sprintf("SET %s %s\n", key, value)
 
-	err := db.wal.Append(log)
+	err := db.store.Append(log)
 	if err != nil {
+		fmt.Println(err)
+		fmt.Println("SET operation failed")
+		return emptyString, false
+	}
+	if err := db.store.Fsync(); err != nil {
 		fmt.Println(err)
 		fmt.Println("SET operation failed")
 		return emptyString, false
@@ -118,8 +121,13 @@ func (db *Database) set(key string, value string) (string, bool) {
 func (db *Database) put(key string, value string) (string, bool) {
 	log := fmt.Sprintf("PUT %s %s\n", key, value)
 
-	err := db.wal.Append(log)
+	err := db.store.Append(log)
 	if err != nil {
+		fmt.Println(err)
+		fmt.Println("fsync failed for the SET operation")
+		return emptyString, false
+	}
+	if err := db.store.Fsync(); err != nil {
 		fmt.Println(err)
 		fmt.Println("fsync failed for the SET operation")
 		return emptyString, false
@@ -132,8 +140,13 @@ func (db *Database) put(key string, value string) (string, bool) {
 
 func (db *Database) delete(key string) (string, bool) {
 	log := fmt.Sprintf("DELETE %s\n", key)
-	err := db.wal.Append(log)
+	err := db.store.Append(log)
 	if err != nil {
+		fmt.Println(err)
+		fmt.Println("delete operation failed")
+		return emptyString, false
+	}
+	if err := db.store.Fsync(); err != nil {
 		fmt.Println(err)
 		fmt.Println("delete operation failed")
 		return emptyString, false

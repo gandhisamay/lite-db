@@ -37,17 +37,11 @@ func (wal *Wal) Append(log string) error {
 	buf := buildByteArrPayload(log)
 
 	_, err := wal.file.Write(buf)
-	if err != nil {
-		return err
-	}
+	return err
+}
 
-	//   TODO: we should not fsync on every write, this is an inefficient approach
-	err = wal.file.Sync()
-	if err != nil {
-		return err
-	}
-
-	return nil
+func (wal *Wal) Fsync() error {
+	return wal.file.Sync()
 }
 
 func (wal *Wal) Replay(fn func([]byte)) error {
