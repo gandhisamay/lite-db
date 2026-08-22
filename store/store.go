@@ -9,12 +9,21 @@ import (
 
 type Store struct {
 	// now we have this ready, let's build upon this now
-	wal        *wal.Wal
-	data       map[string]string
+	wal       walWriter
+	data      map[string]string
 	writeChan chan string
-	batchChan  chan []string
-	timeout    int
-	batchSize  int
+	batchChan chan []string
+	timeout   int
+	batchSize int
+}
+
+// walWriter is the part of the WAL used by the asynchronous writer.
+// Keeping this as an interface makes the writer unit-testable.
+type walWriter interface {
+	Append(string) error
+	Fsync() error
+	Replay(func([]byte)) error
+	Close() error
 }
 
 // Open creates a store and opens its write-ahead log.
@@ -25,11 +34,11 @@ func Open() (*Store, error) {
 	}
 
 	st := &Store{
-		wal:        walFile,
-		data:       make(map[string]string),
+		wal:       walFile,
+		data:      make(map[string]string),
 		writeChan: make(chan string),
-		batchChan:  make(chan []string),
-		batchSize:  5,
+		batchChan: make(chan []string),
+		batchSize: 5,
 	}
 
 	go st.process()
@@ -51,7 +60,6 @@ func (st *Store) Append(entry string) error {
 
 // Close closes the store and its WAL.
 func (st *Store) Close() error {
-	// TODO: resolve writeChan concurrency bug
 	close(st.writeChan)
 	return st.wal.Close()
 }
@@ -75,13 +83,14 @@ func (st *Store) write() {
 
 	}
 
-	// this handles the case when write queue is closed
-	st.batchChan <- batch
+	// Flush a partial final batch, but do not create an empty batch.
+	if len(batch) > 0 {
+		st.batchChan <- batch
+	}
 }
 
 func (st *Store) process() error {
-	for {
-		batch := <-st.batchChan
+	for batch := range st.batchChan {
 
 		for _, entry := range batch {
 			err := st.wal.Append(entry)
@@ -96,4 +105,6 @@ func (st *Store) process() error {
 			return err
 		}
 	}
+
+	return nil
 }
