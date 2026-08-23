@@ -1,4 +1,5 @@
-package store
+// Package memtable provides the in-memory table used by the storage engine.
+package memtable
 
 type Memtable struct {
 	data map[string]entry
@@ -10,20 +11,24 @@ type entry struct {
 	deleted bool
 }
 
-func New() *Memtable {
-	return &Memtable{
-		data: make(map[string]entry),
-		size: 0,
-	}
+const MaxMemTableSize int32 = 4 * 1024 * 1024
+
+// NewMemtable creates an empty memtable.
+func NewMemtable() *Memtable {
+	return &Memtable{data: make(map[string]entry)}
 }
 
-// Put adds or replaces the value for key.
-func (mt *Memtable) Put(key string, value string) {
-	if _, exists := mt.data[key]; !exists {
-		mt.size++
+// Set adds or replaces the value for key.
+func (mt *Memtable) Set(key string, value string) {
+	if old, exists := mt.data[key]; exists {
+		mt.size -= len(key) + len(old.value)
+		if old.deleted {
+			mt.size--
+		}
 	}
 
 	mt.data[key] = entry{value: value}
+	mt.size += len(key) + len(value)
 }
 
 // Get returns the value for key. A missing key and a deleted key both return
@@ -41,15 +46,19 @@ func (mt *Memtable) Get(key string) (string, bool) {
 // a memtable because it prevents an older value from being resurrected when
 // the table is later flushed or merged with older data.
 func (mt *Memtable) Delete(key string) {
-	if _, exists := mt.data[key]; !exists {
-		mt.size++
+	if old, exists := mt.data[key]; exists {
+		mt.size -= len(key) + len(old.value)
+		if old.deleted {
+			mt.size--
+		}
 	}
 
 	mt.data[key] = entry{deleted: true}
+	mt.size += len(key) + 1
 }
 
-// Size returns the number of distinct keys represented by the memtable.
-// Deleted keys are included because their tombstones are represented too.
+// Size returns the number of bytes represented by the memtable, including
+// tombstone overhead.
 func (mt *Memtable) Size() int {
 	return mt.size
 }

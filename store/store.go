@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"time"
 
-	"com.db.beginner/wal"
+	"github.com/gandhisamay/lite-db/memtable"
+	"github.com/gandhisamay/lite-db/wal"
 )
 
 type Store struct {
 	wal       walWriter
-	data      map[string]string
-	writeChan chan string
-	batchChan chan []string
-	mem       *Memtable
-	imm       *Memtable
+	writeChan chan WriteRequest
+	batchChan chan []WriteRequest
+	mem       *memtable.Memtable
+	imm       *memtable.Memtable
 	timeout   int
 	batchSize int
 }
@@ -22,7 +22,7 @@ type Store struct {
 // walWriter is the part of the WAL used by the asynchronous writer.
 // Keeping this as an interface makes the writer unit-testable.
 type walWriter interface {
-	Append(string) error
+	Append(wal.Record) error
 	Fsync() error
 	Replay(func([]byte)) error
 	Close() error
@@ -37,9 +37,10 @@ func Open() (*Store, error) {
 
 	st := &Store{
 		wal:       walFile,
-		data:      make(map[string]string),
-		writeChan: make(chan string),
-		batchChan: make(chan []string),
+		mem:       memtable.NewMemtable(),
+		imm:       nil,
+		writeChan: make(chan WriteRequest),
+		batchChan: make(chan []WriteRequest),
 		batchSize: 5,
 	}
 
@@ -55,7 +56,7 @@ func (st *Store) Replay(fn func([]byte)) error {
 }
 
 // Append writes an entry to the store's WAL.
-func (st *Store) Append(entry string) error {
+func (st *Store) Append(entry WriteRequest) error {
 	st.writeChan <- entry
 	return nil
 }
@@ -70,7 +71,7 @@ func (st *Store) Close() error {
 // a write after writeQueue channel is closed, we need to fix that as well
 func (st *Store) write() {
 	defer close(st.batchChan)
-	batch := make([]string, 0, st.batchSize)
+	batch := make([]WriteRequest, 0, st.batchSize)
 
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
@@ -105,13 +106,13 @@ func (st *Store) write() {
 				// process this array, make a cpy
 				st.batchChan <- batch
 
-				batch = make([]string, 0, st.batchSize)
+				batch = make([]WriteRequest, 0, st.batchSize)
 			}
 
 		case <-timer.C:
 			if len(batch) > 0 {
 				st.batchChan <- batch
-				batch = make([]string, 0, st.batchSize)
+				batch = make([]WriteRequest, 0, st.batchSize)
 			}
 		}
 	}
@@ -121,7 +122,11 @@ func (st *Store) process() error {
 	for batch := range st.batchChan {
 
 		for _, entry := range batch {
-			err := st.wal.Append(entry)
+			err := st.wal.Append(wal.Record{
+				Operation: uint8(entry.Operation),
+				Key:       entry.Key,
+				Value:     entry.Value,
+			})
 			if err != nil {
 				return err
 			}
@@ -132,7 +137,26 @@ func (st *Store) process() error {
 		if err != nil {
 			return err
 		}
+
+		// now for th entire batch, update the memtable, and if the memtable is full, we create a new memtable
+		st.updateMemtables(batch)
 	}
 
 	return nil
+}
+
+func (st *Store) updateMemtables(batch []WriteRequest) {
+	for _, record := range batch {
+		switch record.Operation {
+		case OpSet:
+			st.mem.Set(record.Key, record.Value)
+		case OpDelete:
+			st.mem.Delete(record.Key)
+		}
+
+		if st.mem.Size() >= int(memtable.MaxMemTableSize) {
+			st.imm = st.mem
+			st.mem = memtable.NewMemtable()
+		}
+	}
 }

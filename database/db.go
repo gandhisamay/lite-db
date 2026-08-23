@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"com.db.beginner/store"
+	"github.com/gandhisamay/lite-db/store"
 )
 
 type Database struct {
@@ -15,13 +15,13 @@ type Database struct {
 	isReady bool
 }
 
-type Operation string
+type OperationType = store.OperationType
 
 const (
-	GET    Operation = "GET"
-	SET    Operation = "SET"
-	DELETE Operation = "DELETE"
-	PUT    Operation = "PUT"
+	OpGet     = store.OpGet
+	OpSet     = store.OpSet
+	OpDelete  = store.OpDelete
+	OpInvalid = store.OpInvalid
 )
 
 const emptyString string = ""
@@ -51,19 +51,22 @@ func Start() *Database {
 
 func (db *Database) applyRecord(payload []byte) {
 	logArr := strings.Fields(string(payload))
+	if len(logArr) == 0 {
+		return
+	}
 
-	operation := Operation(logArr[0])
-
-	switch operation {
-	case PUT:
+	switch logArr[0] {
+	case "SET":
+		if len(logArr) < 3 {
+			return
+		}
 		key := logArr[1]
 		value := logArr[2]
 		db.data[key] = value
-	case SET:
-		key := logArr[1]
-		value := logArr[2]
-		db.data[key] = value
-	case DELETE:
+	case "DELETE":
+		if len(logArr) < 2 {
+			return
+		}
 		key := logArr[1]
 		delete(db.data, key)
 	}
@@ -74,20 +77,16 @@ func (db *Database) Close() {
 	db.isReady = false
 }
 
-func (db *Database) Perform(command string, values ...string) (string, bool) {
-	operation := Operation(command)
-
+func (db *Database) Perform(operation OperationType, values ...string) (string, bool) {
 	switch operation {
-	case GET:
+	case OpGet:
 		return db.get(values[0])
-	case SET:
+	case OpSet:
 		return db.set(values[0], values[1])
-	case PUT:
-		return db.put(values[0], values[1])
-	case DELETE:
+	case OpDelete:
 		return db.delete(values[0])
 	default:
-		fmt.Println("Invalid operation, valid operations are GET, SET, PUT, DELETE")
+		fmt.Println("Invalid operation, valid operations are GET, SET, DELETE")
 		return emptyString, false
 	}
 }
@@ -99,9 +98,11 @@ func (db *Database) get(key string) (string, bool) {
 
 func (db *Database) set(key string, value string) (string, bool) {
 	// write to the file first
-	log := fmt.Sprintf("SET %s %s\n", key, value)
-
-	err := db.store.Append(log)
+	err := db.store.Append(store.WriteRequest{
+		Operation: store.OpSet,
+		Key:       key,
+		Value:     value,
+	})
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println("SET operation failed")
@@ -113,24 +114,11 @@ func (db *Database) set(key string, value string) (string, bool) {
 	return key, true
 }
 
-func (db *Database) put(key string, value string) (string, bool) {
-	log := fmt.Sprintf("PUT %s %s\n", key, value)
-
-	err := db.store.Append(log)
-	if err != nil {
-		fmt.Println(err)
-		fmt.Println("fsync failed for the SET operation")
-		return emptyString, false
-	}
-
-	// if that doesn't fail, we write to the map
-	db.data[key] = value
-	return key, true
-}
-
 func (db *Database) delete(key string) (string, bool) {
-	log := fmt.Sprintf("DELETE %s\n", key)
-	err := db.store.Append(log)
+	err := db.store.Append(store.WriteRequest{
+		Operation: store.OpDelete,
+		Key:       key,
+	})
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println("delete operation failed")

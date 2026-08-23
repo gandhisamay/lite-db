@@ -4,14 +4,36 @@ import (
 	"fmt"
 	"os"
 
-	"com.db.beginner/database"
+	"github.com/gandhisamay/lite-db/database"
 )
+
+// Operation is the user-facing command representation used by the CLI.
+type Operation string
+
+const (
+	Get    Operation = "GET"
+	Set    Operation = "SET"
+	Delete Operation = "DELETE"
+)
+
+func (operation Operation) databaseType() database.OperationType {
+	switch operation {
+	case Get:
+		return database.OpGet
+	case Set:
+		return database.OpSet
+	case Delete:
+		return database.OpDelete
+	default:
+		return database.OpInvalid
+	}
+}
 
 func main() {
 	// this is the main function
 	// we provide the
 
-	command := os.Args[1]
+	command := Operation(os.Args[1])
 	key := os.Args[2]
 	var value string
 
@@ -21,7 +43,7 @@ func main() {
 
 	db := database.Start()
 
-	res, valid := db.Perform(command, key, value)
+	res, valid := db.Perform(command.databaseType(), key, value)
 
 	if !valid {
 		fmt.Println("error occurred")

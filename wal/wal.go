@@ -10,6 +10,13 @@ import (
 	"os"
 )
 
+// Record is the WAL-facing representation of a store write request.
+type Record struct {
+	Operation uint8
+	Key       string
+	Value     string
+}
+
 type Wal struct {
 	file *os.File
 	path string
@@ -33,10 +40,15 @@ func (wal *Wal) Close() error {
 	return wal.file.Close()
 }
 
-func (wal *Wal) Append(log string) error {
-	buf := buildByteArrPayload(log)
+func (wal *Wal) Append(record Record) error {
+	payload, err := recordPayload(record)
+	if err != nil {
+		return err
+	}
 
-	_, err := wal.file.Write(buf)
+	buf := buildByteArrPayload(payload)
+
+	_, err = wal.file.Write(buf)
 	return err
 }
 
@@ -92,13 +104,23 @@ func (wal *Wal) Replay(fn func([]byte)) error {
 	}
 }
 
-func buildByteArrPayload(log string) []byte {
-	payload := []byte(log)
+func buildByteArrPayload(payload string) []byte {
 	buf := make([]byte, 8+len(payload))
 	binary.LittleEndian.PutUint32(buf[:4], uint32(len(payload)))
-	binary.LittleEndian.PutUint32(buf[4+len(payload):], crc32.ChecksumIEEE(payload))
+	binary.LittleEndian.PutUint32(buf[4+len(payload):], crc32.ChecksumIEEE([]byte(payload)))
 
 	copy(buf[4:], payload)
 
 	return buf
+}
+
+func recordPayload(record Record) (string, error) {
+	switch record.Operation {
+	case 1:
+		return fmt.Sprintf("SET %s %s\n", record.Key, record.Value), nil
+	case 2:
+		return fmt.Sprintf("DELETE %s\n", record.Key), nil
+	default:
+		return "", fmt.Errorf("unsupported write operation: %d", record.Operation)
+	}
 }

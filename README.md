@@ -17,22 +17,26 @@ database server.
 The current architecture is:
 
 ```text
-CLI / database.Database
-          |
-          v
-   in-memory map       Store
-          |              |
-          +--------------v
-                    WAL writer
-                         |
-                         v
-                      data.wal
+CLI
+ |
+ v
+database.Database ──> in-memory map
+        |
+        v
+  store.WriteRequest
+        |
+        v
+      Store ──> memtable
+        |
+        v
+   WAL writer ──> data.wal
 ```
 
 On startup, `database.Start` opens `data.wal`, replays its records, validates
-each checksum, and reconstructs the in-memory map. Mutations are appended to a
-single writer pipeline and flushed in batches. A batch is flushed when it
-contains five records or when the short batching timer expires.
+each checksum, and reconstructs the in-memory map. Mutations are represented as
+structured `store.WriteRequest` values and sent through a single writer
+pipeline. The WAL serializes each request only at the persistence boundary and
+flushes batches of five records or when the short batching timer expires.
 
 Each WAL record is encoded as:
 
@@ -53,12 +57,11 @@ The database recognizes these case-sensitive operations:
 | --- | --- | --- |
 | `GET` | Reads a value from the in-memory map | `GET key` |
 | `SET` | Writes or overwrites a value | `SET key value` |
-| `PUT` | Currently behaves the same as `SET` | `PUT key value` |
 | `DELETE` | Removes a key | `DELETE key` |
 
 Keys and values are currently split using whitespace, so they must be supplied
-as single whitespace-free command-line arguments. `SET` and `PUT` do not yet
-have different semantics.
+as single whitespace-free command-line arguments. `SET` inserts a new key or
+updates the value when the key already exists.
 
 ## Getting started
 
@@ -98,7 +101,7 @@ Examples:
 ```bash
 ./lite-db GET greeting
 ./lite-db SET greeting hello
-./lite-db PUT language golang
+./lite-db SET language golang
 ./lite-db DELETE greeting
 ```
 
@@ -139,8 +142,10 @@ later.
 .
 ├── main.go              # Command-line entry point
 ├── database/db.go       # Database API and in-memory state machine
+├── store/request.go     # Structured write requests and operation types
 ├── store/store.go       # Batched asynchronous write pipeline
 ├── store/store_test.go  # Group-commit test with a fake WAL
+├── memtable/memtable.go # In-memory table for staged writes
 ├── wal/wal.go           # WAL framing, checksums, replay, and fsync
 ├── go.mod               # Go module definition
 └── plan.md              # Development roadmap and storage-engine notes
@@ -150,9 +155,9 @@ later.
 
 The package boundaries mirror the storage path:
 
-1. `database` applies logical operations to the map and emits WAL entries.
-2. `store` serializes queued entries, groups them, and coordinates flushing.
-3. `wal` owns the file format and recovery checks.
+1. `database` applies logical operations to the map and creates structured write requests.
+2. `store` batches requests, writes them to the WAL, and updates the memtable.
+3. `wal` serializes requests and owns the file format and recovery checks.
 
 When changing the WAL format, update both `Append` and `Replay` together and
 add coverage for truncated records and checksum failures. When changing the

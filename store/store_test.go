@@ -4,16 +4,19 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gandhisamay/lite-db/memtable"
+	"github.com/gandhisamay/lite-db/wal"
 )
 
 type fakeWAL struct {
-	mu       sync.Mutex
-	entries  []string
-	fsyncs   int
-	fsyncCh  chan struct{}
+	mu      sync.Mutex
+	entries []wal.Record
+	fsyncs  int
+	fsyncCh chan struct{}
 }
 
-func (w *fakeWAL) Append(entry string) error {
+func (w *fakeWAL) Append(entry wal.Record) error {
 	w.mu.Lock()
 	w.entries = append(w.entries, entry)
 	w.mu.Unlock()
@@ -40,10 +43,11 @@ func (w *fakeWAL) stats() (int, int) {
 func TestBatchOfFiveIsFsyncedOnce(t *testing.T) {
 	fake := &fakeWAL{fsyncCh: make(chan struct{}, 1)}
 	st := &Store{
-		wal:        fake,
-		writeChan:  make(chan string),
-		batchChan:  make(chan []string),
-		batchSize:  5,
+		wal:       fake,
+		writeChan: make(chan WriteRequest),
+		batchChan: make(chan []WriteRequest),
+		mem:       memtable.NewMemtable(),
+		batchSize: 5,
 	}
 
 	processDone := make(chan struct{})
@@ -54,7 +58,11 @@ func TestBatchOfFiveIsFsyncedOnce(t *testing.T) {
 	go st.write()
 
 	for i := range 5 {
-		st.writeChan <- string(rune('a' + i))
+		st.writeChan <- WriteRequest{
+			Operation: OpSet,
+			Key:       string(rune('a' + i)),
+			Value:     "value",
+		}
 	}
 
 	select {
