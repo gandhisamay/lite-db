@@ -172,13 +172,13 @@ func (st *Store) applyRecord(payload []byte) {
 
 	request := WriteRequest{Key: fields[1]}
 	switch fields[0] {
-	case "SET":
+	case "1":
 		if len(fields) < 3 {
 			return
 		}
 		request.Operation = OpSet
 		request.Value = fields[2]
-	case "DELETE":
+	case "2":
 		request.Operation = OpDelete
 	default:
 		return

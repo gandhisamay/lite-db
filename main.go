@@ -45,6 +45,10 @@ func main() {
 
 	res, valid := db.Perform(command.databaseType(), key, value)
 
+	if command == Get && !valid {
+		fmt.Println("Key not found in the database")
+	}
+
 	if !valid {
 		fmt.Println("error occurred")
 	}
