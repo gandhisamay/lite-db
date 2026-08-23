@@ -42,7 +42,7 @@ func Open() (*Store, error) {
 		imm:       nil,
 		writeChan: make(chan WriteRequest),
 		batchChan: make(chan []WriteRequest),
-		batchSize: 5,
+		batchSize: 1,
 	}
 
 	if err := st.Replay(); err != nil {

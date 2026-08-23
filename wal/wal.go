@@ -41,14 +41,11 @@ func (wal *Wal) Close() error {
 }
 
 func (wal *Wal) Append(record Record) error {
-	payload, err := recordPayload(record)
-	if err != nil {
-		return err
-	}
+	payload := recordPayload(record)
 
 	buf := buildByteArrPayload(payload)
 
-	_, err = wal.file.Write(buf)
+	_, err := wal.file.Write(buf)
 	return err
 }
 
@@ -114,13 +111,6 @@ func buildByteArrPayload(payload string) []byte {
 	return buf
 }
 
-func recordPayload(record Record) (string, error) {
-	switch record.Operation {
-	case 1:
-		return fmt.Sprintf("SET %s %s\n", record.Key, record.Value), nil
-	case 2:
-		return fmt.Sprintf("DELETE %s\n", record.Key), nil
-	default:
-		return "", fmt.Errorf("unsupported write operation: %d", record.Operation)
-	}
+func recordPayload(record Record) string {
+	return fmt.Sprintf("%d %s %s\n", record.Operation, record.Key, record.Value)
 }
