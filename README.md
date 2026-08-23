@@ -3,7 +3,7 @@
 `lite-db` is an educational key-value database written in Go. It is a small
 storage-engine experiment focused on the foundations of durable writes:
 
-- an in-memory key-value map for reads
+- an in-memory memtable for reads and staged writes
 - a checksummed write-ahead log (WAL) for recovery
 - ordered, asynchronous WAL writes
 - group-commit `fsync` batching
@@ -20,7 +20,7 @@ The current architecture is:
 CLI
  |
  v
-database.Database ──> in-memory map
+database.Database ──> store
         |
         v
   store.WriteRequest
@@ -33,10 +33,11 @@ database.Database ──> in-memory map
 ```
 
 On startup, `database.Start` opens `data.wal`, replays its records, validates
-each checksum, and reconstructs the in-memory map. Mutations are represented as
-structured `store.WriteRequest` values and sent through a single writer
-pipeline. The WAL serializes each request only at the persistence boundary and
-flushes batches of five records or when the short batching timer expires.
+each checksum, and applies the records to the store's memtable. Mutations are
+represented as structured `store.WriteRequest` values and sent through a
+single writer pipeline. The WAL serializes each request only at the persistence
+boundary and flushes batches of five records or when the short batching timer
+expires.
 
 Each WAL record is encoded as:
 
@@ -55,7 +56,7 @@ The database recognizes these case-sensitive operations:
 
 | Operation | Behavior | Arguments |
 | --- | --- | --- |
-| `GET` | Reads a value from the in-memory map | `GET key` |
+| `GET` | Reads a value from the active memtable | `GET key` |
 | `SET` | Writes or overwrites a value | `SET key value` |
 | `DELETE` | Removes a key | `DELETE key` |
 
@@ -178,4 +179,4 @@ WAL and recovery
 ```
 
 The current implementation is at the first stage: WAL and recovery
-infrastructure around an in-memory map.
+infrastructure around an in-memory memtable.

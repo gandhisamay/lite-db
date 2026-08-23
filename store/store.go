@@ -3,6 +3,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gandhisamay/lite-db/memtable"
@@ -44,21 +45,30 @@ func Open() (*Store, error) {
 		batchSize: 5,
 	}
 
+	if err := st.Replay(); err != nil {
+		walFile.Close()
+		return nil, err
+	}
+
 	go st.process()
 	go st.write()
 
 	return st, nil
 }
 
-// Replay replays the store's WAL through fn.
-func (st *Store) Replay(fn func([]byte)) error {
-	return st.wal.Replay(fn)
+// Replay rebuilds the store's active memtable from its WAL.
+func (st *Store) Replay() error {
+	return st.wal.Replay(st.applyRecord)
 }
 
 // Append writes an entry to the store's WAL.
 func (st *Store) Append(entry WriteRequest) error {
 	st.writeChan <- entry
 	return nil
+}
+
+func (st *Store) Get(key string) (string, bool) {
+	return st.mem.Get(key)
 }
 
 // Close closes the store and its WAL.
@@ -147,16 +157,48 @@ func (st *Store) process() error {
 
 func (st *Store) updateMemtables(batch []WriteRequest) {
 	for _, record := range batch {
-		switch record.Operation {
-		case OpSet:
-			st.mem.Set(record.Key, record.Value)
-		case OpDelete:
-			st.mem.Delete(record.Key)
-		}
+		st.applyRequest(record)
+	}
+}
 
-		if st.mem.Size() >= int(memtable.MaxMemTableSize) {
-			st.imm = st.mem
-			st.mem = memtable.NewMemtable()
+func (st *Store) applyRecord(payload []byte) {
+	fields := strings.Fields(string(payload))
+	if len(fields) == 0 {
+		return
+	}
+	if len(fields) < 2 {
+		return
+	}
+
+	request := WriteRequest{Key: fields[1]}
+	switch fields[0] {
+	case "SET":
+		if len(fields) < 3 {
+			return
 		}
+		request.Operation = OpSet
+		request.Value = fields[2]
+	case "DELETE":
+		request.Operation = OpDelete
+	default:
+		return
+	}
+
+	st.applyRequest(request)
+}
+
+func (st *Store) applyRequest(request WriteRequest) {
+	switch request.Operation {
+	case OpSet:
+		st.mem.Set(request.Key, request.Value)
+	case OpDelete:
+		st.mem.Delete(request.Key)
+	default:
+		return
+	}
+
+	if st.mem.Size() >= int(memtable.MaxMemTableSize) {
+		st.imm = st.mem
+		st.mem = memtable.NewMemtable()
 	}
 }

@@ -4,13 +4,11 @@ package database
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/gandhisamay/lite-db/store"
 )
 
 type Database struct {
-	data    map[string]string
 	store   *store.Store
 	isReady bool
 }
@@ -35,41 +33,11 @@ func Start() *Database {
 	}
 
 	db := &Database{
-		data:    make(map[string]string),
 		store:   dbStore,
 		isReady: true,
 	}
 
-	err = db.store.Replay(db.applyRecord)
-	if err != nil {
-		db.store.Close()
-		log.Fatalln("wal replay failed:", err)
-	}
-
 	return db
-}
-
-func (db *Database) applyRecord(payload []byte) {
-	logArr := strings.Fields(string(payload))
-	if len(logArr) == 0 {
-		return
-	}
-
-	switch logArr[0] {
-	case "SET":
-		if len(logArr) < 3 {
-			return
-		}
-		key := logArr[1]
-		value := logArr[2]
-		db.data[key] = value
-	case "DELETE":
-		if len(logArr) < 2 {
-			return
-		}
-		key := logArr[1]
-		delete(db.data, key)
-	}
 }
 
 func (db *Database) Close() {
@@ -92,8 +60,7 @@ func (db *Database) Perform(operation OperationType, values ...string) (string, 
 }
 
 func (db *Database) get(key string) (string, bool) {
-	value, exists := db.data[key]
-	return value, exists
+	return db.store.Get(key)
 }
 
 func (db *Database) set(key string, value string) (string, bool) {
@@ -109,8 +76,6 @@ func (db *Database) set(key string, value string) (string, bool) {
 		return emptyString, false
 	}
 
-	// if that doesn't fail, we write to the map
-	db.data[key] = value
 	return key, true
 }
 
@@ -125,7 +90,5 @@ func (db *Database) delete(key string) (string, bool) {
 		return emptyString, false
 	}
 
-	// if that doesn't fail, we write to the map
-	delete(db.data, key)
 	return key, true
 }
