@@ -1,74 +1,57 @@
 # lite-db
 
-`lite-db` is an educational key-value database written in Go. It is a small
-storage-engine experiment focused on the foundations of durable writes:
+`lite-db` is an educational key-value storage engine written in Go. It
+currently combines an in-memory memtable with a checksummed write-ahead log
+(WAL), and exposes a small command-line interface.
 
-- an in-memory memtable for reads and staged writes
-- a checksummed write-ahead log (WAL) for recovery
-- ordered, asynchronous WAL writes
-- group-commit `fsync` batching
-
-The project is intentionally a work in progress. It is currently a WAL-backed
-in-memory store, not a production database and not yet a general-purpose
+The project is a work in progress. It is not yet a production database or a
 database server.
 
-## How it works
-
-The current architecture is:
+## Current architecture
 
 ```text
 CLI
  |
  v
-database.Database ──> store
-        |
-        v
-  store.WriteRequest
-        |
-        v
-      Store ──> memtable
-        |
-        v
-   WAL writer ──> data.wal
+database.Database
+ |
+ v
+store.Store ──> memtable.Memtable
+ |
+ v
+asynchronous WAL writer ──> data.wal
 ```
 
-On startup, `database.Start` opens `data.wal`, replays its records, validates
-each checksum, and applies the records to the store's memtable. Mutations are
-represented as structured `store.WriteRequest` values and sent through a
-single writer pipeline. The WAL serializes each request only at the persistence
-boundary and flushes batches of five records or when the short batching timer
-expires.
+On startup, the store opens `data.wal`, replays and verifies its records, and
+rebuilds the active memtable. Mutations are sent through a write channel,
+appended to the WAL, `fsync`ed, and then applied to the memtable.
 
-Each WAL record is encoded as:
+The memtable stores values in a map and retains delete tombstones so that an
+older value cannot be resurrected during future flushing or merging. It also
+provides `SortedEntries`, which returns records ordered by key for later SSTable
+writing.
 
-```text
-4-byte payload length (little endian)
-payload bytes
-4-byte CRC32 checksum (little endian)
-```
+The `sst` package contains the initial SSTable record encoder, but
+`WriteToSST` is not implemented yet.
 
-The payload is a plain-text command such as `SET greeting hello` or
-`DELETE greeting`.
+## Supported operations
 
-## Current operations
+The CLI recognizes these case-sensitive commands:
 
-The database recognizes these case-sensitive operations:
-
-| Operation | Behavior | Arguments |
+| Command | Usage | Description |
 | --- | --- | --- |
-| `GET` | Reads a value from the active memtable | `GET key` |
-| `SET` | Writes or overwrites a value | `SET key value` |
-| `DELETE` | Removes a key | `DELETE key` |
+| `GET` | `GET key` | Reads a value |
+| `SET` | `SET key value` | Inserts or replaces a value |
+| `DELETE` | `DELETE key` | Records a tombstone |
 
-Keys and values are currently split using whitespace, so they must be supplied
-as single whitespace-free command-line arguments. `SET` inserts a new key or
-updates the value when the key already exists.
+Arguments are currently split by whitespace, so keys and values cannot contain
+spaces.
 
 ## Getting started
 
 ### Requirements
 
-- Go `1.26.5` or a compatible Go toolchain, as specified in `go.mod`
+- Go 1.26.5, or a compatible Go toolchain
 
 ### Run the tests
 
@@ -76,107 +59,89 @@ updates the value when the key already exists.
 go test ./...
 ```
 
-The store test also verifies that five queued records are written and
-`fsync`ed as one group commit:
+The store test verifies that five queued requests can be written and fsynced
+as one group when the writer is configured with a batch size of five.
 
-```bash
-go test ./store -run TestBatchOfFiveIsFsyncedOnce -v
-```
-
-### Build and run the CLI
-
-Build the executable:
+### Build and run
 
 ```bash
 go build -o lite-db .
-```
-
-The command-line shape is:
-
-```text
-lite-db COMMAND KEY [VALUE]
-```
-
-Examples:
-
-```bash
-./lite-db GET greeting
 ./lite-db SET greeting hello
-./lite-db SET language golang
+./lite-db GET greeting
 ./lite-db DELETE greeting
 ```
 
-The WAL path is relative to the process working directory, so these commands
-create or use `data.wal` in the directory from which the executable is run.
-`data.wal` is ignored by Git because it is runtime data.
+The WAL is stored as `data.wal` in the process working directory. Runtime WAL
+data is ignored by Git.
 
-## Important limitations
+## WAL format
 
-This repository is a learning project, and several behaviors are deliberately
-unfinished:
+Each WAL record is encoded as:
 
-- The CLI starts a new database for every command and does not currently call
-  `Database.Close` before exiting.
-- `Store.Append` queues a write and returns before the WAL writer has appended
-  and `fsync`ed it. As a result, a process that exits immediately after a
-  mutation may lose that mutation.
-- Store shutdown does not yet wait for the writer goroutines to finish, so the
-  close path also needs hardening before durability can be promised.
-- There is no server, interactive shell, transaction layer, locking, or
-  concurrent-client protocol.
-- All live data is held in memory; the WAL is the only on-disk representation.
-- There are no pages, buffer pool, index, compaction, or size-management
-  mechanisms yet.
-- The CLI assumes the required arguments are present and currently reports
-  failures with simple console messages.
-- WAL records use whitespace-delimited text, so arbitrary strings and values
-  containing spaces are not supported.
+```text
+4-byte payload length   (little endian)
+payload bytes
+4-byte CRC32 checksum   (little endian)
+```
 
-These limitations are useful boundaries for the next stages of the project:
-first finish the WAL lifecycle and ordering guarantees, then add page storage,
-a buffer pool, and an index such as a B+ tree. Transactions and MVCC can come
-later.
+The payload is a whitespace-delimited text record:
+
+```text
+1 key value\n    # SET
+2 key value\n    # DELETE; value is currently empty
+```
+
+The WAL supports append, `fsync`, replay, and checksum validation. A truncated
+record or checksum mismatch causes replay to return an error.
 
 ## Repository layout
 
 ```text
 .
-├── main.go              # Command-line entry point
-├── database/db.go       # Database API and in-memory state machine
-├── store/request.go     # Structured write requests and operation types
-├── store/store.go       # Batched asynchronous write pipeline
-├── store/store_test.go  # Group-commit test with a fake WAL
-├── memtable/memtable.go # In-memory table for staged writes
+├── main.go              # CLI entry point
+├── database/db.go       # User-facing database operations
+├── store/request.go     # Write request and operation definitions
+├── store/store.go       # Write pipeline, replay, and memtable management
+├── store/store_test.go  # Group-commit test
+├── memtable/memtable.go # In-memory values, tombstones, and sorted records
 ├── wal/wal.go           # WAL framing, checksums, replay, and fsync
+├── sst/sst.go           # Initial SSTable encoding scaffold
 ├── go.mod               # Go module definition
-└── plan.md              # Development roadmap and storage-engine notes
+└── plan.md              # Storage-engine roadmap
 ```
 
-## Development notes
+## Known limitations
 
-The package boundaries mirror the storage path:
+- All live data is currently held in memory; the WAL is the only completed
+  on-disk storage path.
+- The default store batch size is currently one, although the writer supports
+  configurable batch sizes and timer-triggered flushes.
+- `Append` queues a mutation and returns before the asynchronous writer has
+  completed its WAL append and `fsync`.
+- Shutdown does not yet wait for all writer goroutines to finish, and callers
+  must explicitly close the database.
+- The CLI starts a new database instance for each command and does not
+  currently close it before exiting.
+- There is no completed SSTable writer, page manager, buffer pool, index,
+  compaction, transaction layer, MVCC, locking, or concurrent-client protocol.
+- The CLI assumes the required arguments are present and reports errors with
+  simple console messages.
+- The text WAL format does not support arbitrary keys or values containing
+  whitespace.
 
-1. `database` applies logical operations to the map and creates structured write requests.
-2. `store` batches requests, writes them to the WAL, and updates the memtable.
-3. `wal` serializes requests and owns the file format and recovery checks.
-
-When changing the WAL format, update both `Append` and `Replay` together and
-add coverage for truncated records and checksum failures. When changing the
-writer pipeline, preserve the ordering guarantee and test shutdown as well as
-batch-size and timer-triggered flushes.
-
-## Project direction
+## Roadmap
 
 The intended learning path is:
 
 ```text
 WAL and recovery
-      -> fixed-size pages
-      -> page manager
-      -> buffer pool
-      -> B+ tree index
-      -> transactions and MVCC
+    -> SSTable flushing
+    -> fixed-size pages and page manager
+    -> buffer pool
+    -> B+ tree or LSM index
+    -> compaction
+    -> transactions and MVCC
 ```
 
-The current implementation is at the first stage: WAL and recovery
-infrastructure around an in-memory memtable.
+The current focus is completing the transition from the WAL-backed memtable to
+durable sorted-table files.

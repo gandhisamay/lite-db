@@ -1,6 +1,8 @@
 // Package memtable provides the in-memory table used by the storage engine.
 package memtable
 
+import "sort"
+
 type Memtable struct {
 	data map[string]entry
 	size int
@@ -9,6 +11,12 @@ type Memtable struct {
 type entry struct {
 	value   string
 	deleted bool
+}
+
+type Record struct {
+	Key     string
+	Value   string
+	Deleted bool
 }
 
 const MaxMemTableSize int32 = 4 * 1024 * 1024
@@ -61,4 +69,27 @@ func (mt *Memtable) Delete(key string) {
 // tombstone overhead.
 func (mt *Memtable) Size() int {
 	return mt.size
+}
+
+func (mt *Memtable) SortedEntries() []Record {
+	entries := make([]Record, len(mt.data))
+
+	i := 0
+
+	for key, entry := range mt.data {
+		entries[i] = Record{
+			Key:     key,
+			Value:   entry.value,
+			Deleted: entry.deleted,
+		}
+
+		i++
+	}
+
+	// now we have to sort this
+	sort.Slice(entries, func(i int, j int) bool {
+		return entries[i].Key < entries[j].Key
+	})
+
+	return entries
 }
