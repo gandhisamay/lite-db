@@ -68,7 +68,26 @@ func (st *Store) Append(entry WriteRequest) error {
 }
 
 func (st *Store) Get(key string) (string, bool) {
-	return st.mem.Get(key)
+	// read from both the mem and imm
+	val, exists := st.mem.Get(key)
+
+	if exists {
+		return val, exists
+	}
+
+	// if it doesn't exist, then we check the imm
+	if st.imm != nil {
+		val, exists := st.imm.Get(key)
+
+		if exists {
+			return val, exists
+		}
+	}
+
+	// if we don't find in imm as well, we check the SST
+	// this is the todo for future
+	// for now return empty values
+	return "", false
 }
 
 // Close closes the store and its WAL.

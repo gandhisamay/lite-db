@@ -47,10 +47,12 @@ func main() {
 
 	if command == Get && !valid {
 		fmt.Println("Key not found in the database")
+		return
 	}
 
 	if !valid {
 		fmt.Println("error occurred")
+		return
 	}
 
 	fmt.Printf("%s %s - %s\n", command, key, res)
